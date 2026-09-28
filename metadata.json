@@ -1,0 +1,6 @@
+{
+  "name": "Gemma 4 Developer Agent Studio",
+  "description": "Autonomous SWE agent builder, ADK config validator, graph-code simulator, and submission.zip generator for the Google Gemma 4 Developer Agent Competition.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
