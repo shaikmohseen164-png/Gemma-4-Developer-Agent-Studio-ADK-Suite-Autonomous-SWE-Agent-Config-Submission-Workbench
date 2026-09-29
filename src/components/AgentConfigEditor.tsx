@@ -13,6 +13,7 @@ import {
   Zap,
   Clock,
   Terminal,
+  CheckCheck,
 } from 'lucide-react';
 import { VirtualFileTree, ALLOWED_HARNESS_TOOLS, REQUIRED_BASE_MODEL } from '../types/agent';
 import yaml from 'yaml';
@@ -20,8 +21,8 @@ import yaml from 'yaml';
 interface AgentConfigEditorProps {
   files: VirtualFileTree;
   onChangeFile: (path: string, content: string) => void;
-  onCreateFile: (type: 'prompt' | 'subagent' | 'skill' | 'lora', name: string) => void;
-  onDeleteFile: (type: 'prompt' | 'subagent' | 'skill' | 'lora', name: string) => void;
+  onCreateFile: (type: 'prompt' | 'subagent' | 'skill' | 'lora' | 'test', name: string) => void;
+  onDeleteFile: (type: 'prompt' | 'subagent' | 'skill' | 'lora' | 'test', name: string) => void;
 }
 
 export const AgentConfigEditor: React.FC<AgentConfigEditorProps> = ({
@@ -33,8 +34,10 @@ export const AgentConfigEditor: React.FC<AgentConfigEditorProps> = ({
   const [selectedFile, setSelectedFile] = useState<string>('agent.yaml');
   const [newPromptName, setNewPromptName] = useState('');
   const [newSubAgentName, setNewSubAgentName] = useState('');
+  const [newTestName, setNewTestName] = useState('');
   const [showAddPromptModal, setShowAddPromptModal] = useState(false);
   const [showAddSubAgentModal, setShowAddSubAgentModal] = useState(false);
+  const [showAddTestModal, setShowAddTestModal] = useState(false);
   const [showAddLoraModal, setShowAddLoraModal] = useState(false);
   const [newLoraName, setNewLoraName] = useState('');
 
@@ -51,6 +54,10 @@ export const AgentConfigEditor: React.FC<AgentConfigEditorProps> = ({
     if (selectedFile.startsWith('sub_agents/')) {
       const sa = selectedFile.replace(/^sub_agents\//, '');
       return files.sub_agents[sa] || '';
+    }
+    if (selectedFile.startsWith('tests/')) {
+      const t = selectedFile.replace(/^tests\//, '');
+      return files.tests?.[t] || '';
     }
     if (selectedFile.startsWith('adapters/')) {
       const parts = selectedFile.split('/');
@@ -367,6 +374,74 @@ Target Modules: q_proj, k_proj, v_proj, o_proj
               </div>
             </div>
 
+            {/* Adapters folder */}
+            <div className="pt-2">
+              <div className="flex items-center justify-between text-slate-400 text-[11px] px-1 py-1">
+                <span className="flex items-center gap-1.5 font-sans font-medium text-slate-300">
+                  <Cpu className="w-3.5 h-3.5 text-pink-400" />
+                  adapters/
+                </span>
+                <button
+                  onClick={() => setShowAddLoraModal(true)}
+                  className="hover:text-indigo-400 flex items-center gap-0.5 text-[10px] cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" /> New
+                </button>
+              </div>
+              <div className="pl-4 space-y-0.5">
+                {Object.keys(files.adapters).length === 0 ? (
+                  <div className="text-[11px] text-slate-500 italic px-2 py-0.5">
+                    (No LoRA adapters)
+                  </div>
+                ) : (
+                  Object.keys(files.adapters).map((adapterName) => (
+                    <div key={adapterName} className="space-y-0.5">
+                      <div
+                        onClick={() => setSelectedFile(`adapters/${adapterName}/adapter_config.json`)}
+                        className={`flex items-center justify-between px-2 py-1 rounded cursor-pointer text-[11px] transition ${
+                          selectedFile === `adapters/${adapterName}/adapter_config.json`
+                            ? 'bg-indigo-600/30 text-indigo-200 border border-indigo-500/40'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                        }`}
+                      >
+                        <span className="text-pink-300">{adapterName}/</span>
+                        <button
+                          aria-label={`Delete adapter ${adapterName}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteFile('lora', adapterName);
+                          }}
+                          className="text-slate-500 hover:text-rose-400"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div
+                        onClick={() => setSelectedFile(`adapters/${adapterName}/adapter_config.json`)}
+                        className={`pl-3 text-[10px] px-2 py-0.5 rounded cursor-pointer ${
+                          selectedFile === `adapters/${adapterName}/adapter_config.json`
+                            ? 'text-cyan-300 bg-cyan-950/40'
+                            : 'text-slate-400 hover:text-slate-300'
+                        }`}
+                      >
+                        ↳ adapter_config.json
+                      </div>
+                      <div
+                        onClick={() => setSelectedFile(`adapters/${adapterName}/adapter_model.safetensors`)}
+                        className={`pl-3 text-[10px] px-2 py-0.5 rounded cursor-pointer ${
+                          selectedFile === `adapters/${adapterName}/adapter_model.safetensors`
+                            ? 'text-cyan-300 bg-cyan-950/40'
+                            : 'text-slate-400 hover:text-slate-300'
+                        }`}
+                      >
+                        ↳ adapter_model.safetensors
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
             {/* Skills folder */}
             <div className="pt-2">
               <div className="flex items-center justify-between text-slate-400 text-[11px] px-1 py-1">
@@ -418,6 +493,53 @@ Target Modules: q_proj, k_proj, v_proj, o_proj
                     ))}
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* Tests folder */}
+            <div className="pt-2">
+              <div className="flex items-center justify-between text-slate-400 text-[11px] px-1 py-1">
+                <span className="flex items-center gap-1.5 font-sans font-medium text-slate-300">
+                  <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  tests/
+                </span>
+                <button
+                  onClick={() => setShowAddTestModal(true)}
+                  className="hover:text-indigo-400 flex items-center gap-0.5 text-[10px] cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" /> New
+                </button>
+              </div>
+              <div className="pl-4 space-y-0.5">
+                {Object.keys(files.tests || {}).length === 0 ? (
+                  <div className="text-[11px] text-slate-500 italic px-2 py-0.5">
+                    (No test scripts)
+                  </div>
+                ) : (
+                  Object.keys(files.tests || {}).map((fname) => (
+                    <div
+                      key={fname}
+                      onClick={() => setSelectedFile(`tests/${fname}`)}
+                      className={`flex items-center justify-between px-2 py-1 rounded cursor-pointer text-[11px] transition ${
+                        selectedFile === `tests/${fname}`
+                          ? 'bg-indigo-600/30 text-indigo-200 border border-indigo-500/40'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                      }`}
+                    >
+                      <span className="text-emerald-300">{fname}</span>
+                      <button
+                        aria-label={`Delete test ${fname}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteFile('test', fname);
+                        }}
+                        className="text-slate-500 hover:text-rose-400"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -492,6 +614,9 @@ Target Modules: q_proj, k_proj, v_proj, o_proj
               )}
               {selectedFile.startsWith('skills/') && (
                 <span>Skills must have YAML frontmatter with matching name in SKILL.md.</span>
+              )}
+              {selectedFile.startsWith('tests/') && (
+                <span>Validation test scripts can be executed via run_command to verify diffs before submitting.</span>
               )}
               {selectedFile === 'eval_config.yaml' && (
                 <span>Overall competition time limit is capped at 12 hours.</span>
@@ -581,6 +706,47 @@ Target Modules: q_proj, k_proj, v_proj, o_proj
                 className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium cursor-pointer"
               >
                 Create Sub-Agent
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Add New Test Script */}
+      {showAddTestModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 max-w-md w-full shadow-2xl space-y-4">
+            <h3 className="text-sm font-semibold text-white">Create Validation Test Template</h3>
+            <p className="text-xs text-slate-400">
+              New test script will be saved under <code className="text-indigo-300 font-mono">tests/</code> for executing regression checks and test reproducing before <code className="text-cyan-300 font-mono">submit_patch()</code>.
+            </p>
+            <input
+              type="text"
+              placeholder="e.g. test_regression_poly.py"
+              value={newTestName}
+              onChange={(e) => setNewTestName(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
+            />
+            <div className="flex justify-end gap-2 text-xs">
+              <button
+                onClick={() => setShowAddTestModal(false)}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (newTestName.trim()) {
+                    const fname = newTestName.endsWith('.py') || newTestName.endsWith('.sh') ? newTestName.trim() : `${newTestName.trim()}.py`;
+                    onCreateFile('test', fname);
+                    setSelectedFile(`tests/${fname}`);
+                    setShowAddTestModal(false);
+                    setNewTestName('');
+                  }
+                }}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium cursor-pointer"
+              >
+                Create Test Script
               </button>
             </div>
           </div>

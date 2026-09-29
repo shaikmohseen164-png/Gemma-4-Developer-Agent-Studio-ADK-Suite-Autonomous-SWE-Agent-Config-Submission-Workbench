@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Network,
   Search,
@@ -10,15 +10,20 @@ import {
   RotateCcw,
   Sparkles,
   Info,
+  Layers,
+  FolderTree,
+  Filter,
 } from 'lucide-react';
-import { GraphNode, GraphEdge } from '../types/agent';
+import { GraphNode, GraphEdge, VirtualFileTree } from '../types/agent';
+import { extractCodeGraphFromFiles } from '../utils/graphExtractor';
 
 interface GraphReasoningLabProps {
+  files?: VirtualFileTree;
   onInsertToolCall?: (toolName: string, args: Record<string, unknown>) => void;
 }
 
-// Sample repository call-graph dataset
-const REPO_NODES: GraphNode[] = [
+// Sample repository benchmark call-graph dataset
+const BENCHMARK_NODES: GraphNode[] = [
   { id: 'sympy.polys.polytools.factor', name: 'factor', type: 'function', file: 'sympy/polys/polytools.py', line: 5820, docstring: 'Compute the factorization of an expression into irreducible factors.' },
   { id: 'sympy.polys.polytools._generic_factor', name: '_generic_factor', type: 'function', file: 'sympy/polys/polytools.py', line: 5912, docstring: 'Helper for domain-specific factorization dispatch.' },
   { id: 'sympy.polys.polytools._symbolic_factor', name: '_symbolic_factor', type: 'function', file: 'sympy/polys/polytools.py', line: 5950, docstring: 'Handles algebraic extensions and multivariate symbolic terms.' },
@@ -29,7 +34,7 @@ const REPO_NODES: GraphNode[] = [
   { id: 'sympy.core.expr.Expr.as_poly', name: 'Expr.as_poly', type: 'method', file: 'sympy/core/expr.py', line: 1045, docstring: 'Convert expression to Poly instance if possible.' },
 ];
 
-const REPO_EDGES: GraphEdge[] = [
+const BENCHMARK_EDGES: GraphEdge[] = [
   { source: 'sympy.polys.polytools.factor', target: 'sympy.polys.polytools._generic_factor', type: 'calls' },
   { source: 'sympy.polys.polytools.factor', target: 'sympy.polys.polyoptions.build_options', type: 'calls' },
   { source: 'sympy.polys.polytools._generic_factor', target: 'sympy.polys.polytools._symbolic_factor', type: 'calls' },
@@ -39,31 +44,115 @@ const REPO_EDGES: GraphEdge[] = [
   { source: 'sympy.polys.polytools.factor', target: 'sympy.core.expr.Expr.as_poly', type: 'references' },
 ];
 
-export const GraphReasoningLab: React.FC<GraphReasoningLabProps> = () => {
+export const GraphReasoningLab: React.FC<GraphReasoningLabProps> = ({ files }) => {
+  const [graphMode, setGraphMode] = useState<'current_files' | 'benchmark_repo'>('current_files');
   const [activeTab, setActiveTab] = useState<'search' | 'neighbors' | 'subgraph'>('search');
   const [searchQuery, setSearchQuery] = useState('factor polynomial multivariate algebraic extension');
-  const [selectedNodeId, setSelectedNodeId] = useState<string>('sympy.polys.polytools.factor');
-  const [subgraphNodes, setSubgraphNodes] = useState<string[]>([
-    'sympy.polys.polytools.factor',
-    'sympy.polys.polytools._generic_factor',
-    'sympy.polys.polytools._symbolic_factor',
-  ]);
-  const [edgeFilter, setEdgeFilter] = useState<string>('all');
+  const [edgeFilter, setEdgeFilter] = useState<'all' | 'calls' | 'references' | 'imports'>('all');
   const [kResults, setKResults] = useState<number>(4);
+
+  // Compute live graph from current submission files
+  const liveFileGraph = useMemo(() => {
+    if (!files) {
+      return { nodes: BENCHMARK_NODES, edges: BENCHMARK_EDGES };
+    }
+    return extractCodeGraphFromFiles(files);
+  }, [files]);
+
+  // Active dataset
+  const activeNodes = graphMode === 'current_files' ? liveFileGraph.nodes : BENCHMARK_NODES;
+  const activeEdges = graphMode === 'current_files' ? liveFileGraph.edges : BENCHMARK_EDGES;
+
+  const [selectedNodeId, setSelectedNodeId] = useState<string>(() => {
+    return activeNodes[0]?.id || 'agent.yaml:root';
+  });
+
+  const [subgraphNodes, setSubgraphNodes] = useState<string[]>(() => {
+    return activeNodes.slice(0, 3).map((n) => n.id);
+  });
+
+  // Keep selected node synced if dataset changes
+  const selectedNode = activeNodes.find((n) => n.id === selectedNodeId) || activeNodes[0] || {
+    id: 'unknown',
+    name: 'Unknown',
+    type: 'module',
+    file: 'unknown',
+    line: 1,
+    docstring: '',
+  };
+
+  // Filtered edges
+  const filteredEdges = activeEdges.filter((e) => {
+    if (edgeFilter === 'all') return true;
+    return e.type === edgeFilter;
+  });
+
+  // Calculate coordinates for SVG dynamic layout
+  const nodePositions = useMemo(() => {
+    const coords: Record<string, { x: number; y: number }> = {};
+    const total = activeNodes.length;
+
+    if (graphMode === 'benchmark_repo') {
+      const fixedBenchmark: Record<string, { x: number; y: number }> = {
+        'sympy.polys.polytools.factor': { x: 90, y: 160 },
+        'sympy.polys.polyoptions.build_options': { x: 140, y: 50 },
+        'sympy.core.expr.Expr.as_poly': { x: 90, y: 280 },
+        'sympy.polys.polytools._generic_factor': { x: 280, y: 160 },
+        'sympy.polys.polytools._symbolic_factor': { x: 280, y: 50 },
+        'sympy.polys.factortools.dmp_factor_list': { x: 470, y: 160 },
+        'sympy.polys.factortools.dup_factor_list': { x: 620, y: 160 },
+        'sympy.polys.domains.domain.Domain.convert': { x: 620, y: 280 },
+      };
+      return fixedBenchmark;
+    }
+
+    // Dynamic radial/force layout for current files
+    // Put root agent in center
+    const rootIndex = activeNodes.findIndex((n) => n.id === 'agent.yaml:root');
+    const width = 740;
+    const height = 360;
+    const centerX = width / 2;
+    const centerY = height / 2;
+
+    coords['agent.yaml:root'] = { x: centerX, y: centerY };
+
+    // Group other nodes into orbits by type
+    const nonRoot = activeNodes.filter((n) => n.id !== 'agent.yaml:root');
+    const count = nonRoot.length;
+
+    nonRoot.forEach((node, idx) => {
+      // Determine distance by node category
+      let radius = 135;
+      if (node.id.startsWith('tool:')) radius = 150;
+      else if (node.id.startsWith('sub_agents/')) radius = 110;
+      else if (node.id.startsWith('adapters/')) radius = 120;
+      else if (node.id.startsWith('skills/')) radius = 140;
+
+      const angle = (idx / Math.max(1, count)) * 2 * Math.PI - Math.PI / 2;
+      const x = Math.round(centerX + Math.cos(angle) * (radius * 1.55));
+      const y = Math.round(centerY + Math.sin(angle) * radius);
+      coords[node.id] = {
+        x: Math.max(50, Math.min(width - 50, x)),
+        y: Math.max(40, Math.min(height - 40, y)),
+      };
+    });
+
+    return coords;
+  }, [activeNodes, graphMode]);
 
   // Simulated cosine similarity matching
   const getSearchResults = () => {
     const queryTokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
-    return REPO_NODES.map((node) => {
+    return activeNodes.map((node) => {
       const text = `${node.name} ${node.id} ${node.docstring || ''} ${node.file}`.toLowerCase();
       let matchScore = 0.35;
       queryTokens.forEach((tok) => {
-        if (text.includes(tok)) matchScore += 0.15;
+        if (text.includes(tok)) matchScore += 0.18;
       });
-      if (node.name.toLowerCase().includes(queryTokens[0] || '')) matchScore += 0.2;
+      if (node.name.toLowerCase().includes(queryTokens[0] || '')) matchScore += 0.22;
       return {
         node,
-        similarity: Math.min(0.97, Math.max(0.42, Number(matchScore.toFixed(3)))),
+        similarity: Math.min(0.98, Math.max(0.38, Number(matchScore.toFixed(3)))),
       };
     })
       .sort((a, b) => b.similarity - a.similarity)
@@ -72,30 +161,17 @@ export const GraphReasoningLab: React.FC<GraphReasoningLabProps> = () => {
 
   // Node neighbors
   const getNeighbors = (nodeId: string) => {
-    const outgoing = REPO_EDGES.filter((e) => e.source === nodeId);
-    const incoming = REPO_EDGES.filter((e) => e.target === nodeId);
+    const outgoing = activeEdges.filter((e) => e.source === nodeId);
+    const incoming = activeEdges.filter((e) => e.target === nodeId);
     return { outgoing, incoming };
   };
 
-  const selectedNode = REPO_NODES.find((n) => n.id === selectedNodeId) || REPO_NODES[0];
-  const { outgoing, incoming } = getNeighbors(selectedNodeId);
+  const { outgoing, incoming } = getNeighbors(selectedNode.id);
 
   // Induced subgraph calculation
-  const inducedEdges = REPO_EDGES.filter(
+  const inducedEdges = activeEdges.filter(
     (e) => subgraphNodes.includes(e.source) && subgraphNodes.includes(e.target),
   );
-
-  // Node positions for visual SVG graph
-  const nodeCoordinates: Record<string, { x: number; y: number }> = {
-    'sympy.polys.polytools.factor': { x: 80, y: 140 },
-    'sympy.polys.polyoptions.build_options': { x: 120, y: 40 },
-    'sympy.core.expr.Expr.as_poly': { x: 80, y: 260 },
-    'sympy.polys.polytools._generic_factor': { x: 260, y: 140 },
-    'sympy.polys.polytools._symbolic_factor': { x: 260, y: 40 },
-    'sympy.polys.factortools.dmp_factor_list': { x: 440, y: 140 },
-    'sympy.polys.factortools.dup_factor_list': { x: 580, y: 140 },
-    'sympy.polys.domains.domain.Domain.convert': { x: 580, y: 260 },
-  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-4 space-y-5">
@@ -112,23 +188,44 @@ export const GraphReasoningLab: React.FC<GraphReasoningLabProps> = () => {
             </span>
           </div>
           <p className="text-xs text-slate-400 max-w-3xl leading-relaxed">
-            The competition dataset includes pre-computed call/dependency graphs and dense symbol embeddings.
-            Your Gemma 4 agent can invoke <code className="text-indigo-300 font-mono">search_similar_code</code>,{' '}
+            The competition harness provides graph reasoning tools: <code className="text-indigo-300 font-mono">search_similar_code</code>,{' '}
             <code className="text-indigo-300 font-mono">get_code_neighbors</code>, and{' '}
-            <code className="text-indigo-300 font-mono">get_code_subgraph</code> to achieve superhuman SWE-bench localization without brute-force file crawling.
+            <code className="text-indigo-300 font-mono">get_code_subgraph</code>. Below, visualize both the live dependency graph extracted from your current files and the SWE-bench evaluation benchmark.
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Graph Mode Switcher */}
+        <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-lg border border-slate-800 shrink-0">
           <button
             onClick={() => {
-              setSearchQuery('factor polynomial multivariate algebraic');
-              setSelectedNodeId('sympy.polys.polytools.factor');
+              setGraphMode('current_files');
+              if (liveFileGraph.nodes[0]) setSelectedNodeId(liveFileGraph.nodes[0].id);
+              setSubgraphNodes(liveFileGraph.nodes.slice(0, 3).map((n) => n.id));
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs transition cursor-pointer"
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
+              graphMode === 'current_files'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Demo</span>
+            <FolderTree className="w-3.5 h-3.5" />
+            <span>Current Files Graph</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setGraphMode('benchmark_repo');
+              setSelectedNodeId(BENCHMARK_NODES[0].id);
+              setSubgraphNodes(BENCHMARK_NODES.slice(0, 3).map((n) => n.id));
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition cursor-pointer ${
+              graphMode === 'benchmark_repo'
+                ? 'bg-indigo-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <GitFork className="w-3.5 h-3.5" />
+            <span>Benchmark Repo (SymPy)</span>
           </button>
         </div>
       </div>
@@ -136,31 +233,44 @@ export const GraphReasoningLab: React.FC<GraphReasoningLabProps> = () => {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Visual Graph Canvas Card */}
         <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-sm flex flex-col">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-3">
+          <div className="flex flex-wrap items-center justify-between pb-3 border-b border-slate-800/80 mb-3 gap-2">
             <div className="flex items-center gap-2">
               <GitFork className="w-4 h-4 text-cyan-400" />
-              <h3 className="text-sm font-semibold text-white">Interactive Call/Dependency Graph</h3>
+              <h3 className="text-sm font-semibold text-white">
+                {graphMode === 'current_files' ? 'Current Submission Structure Code-Graph' : 'Repository Call/Dependency Graph'}
+              </h3>
+              <span className="text-[11px] font-mono text-slate-400 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                {activeNodes.length} nodes · {filteredEdges.length} edges
+              </span>
             </div>
-            <div className="flex items-center gap-2 text-xs text-slate-400 font-mono">
-              <span className="flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 inline-block"></span>
-                Function
+
+            {/* Edge Filter */}
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-500 flex items-center gap-1 text-[11px]">
+                <Filter className="w-3 h-3" /> Edge:
               </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded-full bg-cyan-500 inline-block"></span>
-                Method
-              </span>
+              <select
+                aria-label="Filter edge types"
+                value={edgeFilter}
+                onChange={(e) => setEdgeFilter(e.target.value as any)}
+                className="bg-slate-950 text-slate-300 text-xs rounded border border-slate-800 px-2 py-0.5 focus:outline-none"
+              >
+                <option value="all">All Edges</option>
+                <option value="calls">calls</option>
+                <option value="references">references</option>
+                <option value="imports">imports</option>
+              </select>
             </div>
           </div>
 
           {/* SVG Visualizer */}
-          <div className="relative bg-slate-950 rounded-lg border border-slate-800/80 h-[360px] overflow-hidden p-2 flex items-center justify-center">
-            <svg className="w-full h-full" viewBox="0 0 700 320">
+          <div className="relative bg-slate-950 rounded-lg border border-slate-800/80 h-[380px] overflow-hidden p-2 flex items-center justify-center">
+            <svg className="w-full h-full" viewBox="0 0 740 360">
               <defs>
                 <marker
-                  id="arrow"
+                  id="arrow-calls"
                   viewBox="0 0 10 10"
-                  refX="18"
+                  refX="19"
                   refY="5"
                   markerWidth="6"
                   markerHeight="6"
@@ -169,9 +279,31 @@ export const GraphReasoningLab: React.FC<GraphReasoningLabProps> = () => {
                   <path d="M 0 1 L 8 5 L 0 9 z" fill="#6366f1" />
                 </marker>
                 <marker
+                  id="arrow-references"
+                  viewBox="0 0 10 10"
+                  refX="19"
+                  refY="5"
+                  markerWidth="6"
+                  markerHeight="6"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 1 L 8 5 L 0 9 z" fill="#06b6d4" />
+                </marker>
+                <marker
+                  id="arrow-imports"
+                  viewBox="0 0 10 10"
+                  refX="19"
+                  refY="5"
+                  markerWidth="6"
+                  markerHeight="6"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 1 L 8 5 L 0 9 z" fill="#10b981" />
+                </marker>
+                <marker
                   id="arrow-active"
                   viewBox="0 0 10 10"
-                  refX="18"
+                  refX="20"
                   refY="5"
                   markerWidth="7"
                   markerHeight="7"
@@ -182,22 +314,38 @@ export const GraphReasoningLab: React.FC<GraphReasoningLabProps> = () => {
               </defs>
 
               {/* Render edges */}
-              {REPO_EDGES.map((edge, idx) => {
-                const src = nodeCoordinates[edge.source];
-                const tgt = nodeCoordinates[edge.target];
+              {filteredEdges.map((edge, idx) => {
+                const src = nodePositions[edge.source];
+                const tgt = nodePositions[edge.target];
                 if (!src || !tgt) return null;
-                const isSelected = edge.source === selectedNodeId || edge.target === selectedNodeId;
+                const isSelected = edge.source === selectedNode.id || edge.target === selectedNode.id;
+                const edgeColor = isSelected
+                  ? '#38bdf8'
+                  : edge.type === 'calls'
+                  ? '#4f46e5'
+                  : edge.type === 'references'
+                  ? '#0284c7'
+                  : '#059669';
+
                 return (
-                  <g key={idx}>
+                  <g key={`${edge.source}-${edge.target}-${idx}`}>
                     <line
                       x1={src.x}
                       y1={src.y}
                       x2={tgt.x}
                       y2={tgt.y}
-                      stroke={isSelected ? '#38bdf8' : '#334155'}
-                      strokeWidth={isSelected ? 2 : 1.2}
+                      stroke={edgeColor}
+                      strokeWidth={isSelected ? 2.2 : 1.2}
                       strokeDasharray={edge.type === 'references' ? '4 3' : undefined}
-                      markerEnd={isSelected ? 'url(#arrow-active)' : 'url(#arrow)'}
+                      markerEnd={
+                        isSelected
+                          ? 'url(#arrow-active)'
+                          : edge.type === 'references'
+                          ? 'url(#arrow-references)'
+                          : edge.type === 'imports'
+                          ? 'url(#arrow-imports)'
+                          : 'url(#arrow-calls)'
+                      }
                     />
                     {/* Edge label */}
                     <text
@@ -215,11 +363,34 @@ export const GraphReasoningLab: React.FC<GraphReasoningLabProps> = () => {
               })}
 
               {/* Render Nodes */}
-              {REPO_NODES.map((node) => {
-                const pos = nodeCoordinates[node.id];
+              {activeNodes.map((node) => {
+                const pos = nodePositions[node.id];
                 if (!pos) return null;
-                const isSelected = node.id === selectedNodeId;
+                const isSelected = node.id === selectedNode.id;
                 const isInSubgraph = subgraphNodes.includes(node.id);
+                const isRoot = node.id === 'agent.yaml:root';
+
+                // Node coloring by type
+                let nodeStroke = '#6366f1';
+                let nodeFill = '#0f172a';
+                if (isRoot) {
+                  nodeStroke = '#eab308';
+                  nodeFill = '#713f12';
+                } else if (node.type === 'class') {
+                  nodeStroke = '#a855f7';
+                } else if (node.type === 'method') {
+                  nodeStroke = '#06b6d4';
+                } else if (node.type === 'module') {
+                  nodeStroke = '#10b981';
+                }
+
+                if (isSelected) {
+                  nodeFill = '#4338ca';
+                  nodeStroke = '#38bdf8';
+                } else if (isInSubgraph) {
+                  nodeFill = '#1e293b';
+                }
+
                 return (
                   <g
                     key={node.id}
@@ -229,29 +400,41 @@ export const GraphReasoningLab: React.FC<GraphReasoningLabProps> = () => {
                     <circle
                       cx={pos.x}
                       cy={pos.y}
-                      r={isSelected ? 16 : 13}
-                      fill={isSelected ? '#4f46e5' : isInSubgraph ? '#1e293b' : '#0f172a'}
-                      stroke={isSelected ? '#818cf8' : node.type === 'method' ? '#06b6d4' : '#6366f1'}
-                      strokeWidth={isSelected ? 3 : 1.5}
+                      r={isRoot ? 18 : isSelected ? 15 : 12}
+                      fill={nodeFill}
+                      stroke={nodeStroke}
+                      strokeWidth={isSelected ? 3 : isRoot ? 2.5 : 1.5}
                     />
                     <text
                       x={pos.x}
-                      y={pos.y + 24}
+                      y={pos.y + 22}
                       textAnchor="middle"
-                      fill={isSelected ? '#ffffff' : '#94a3b8'}
-                      fontSize="11"
-                      fontWeight={isSelected ? '600' : '400'}
+                      fill={isSelected ? '#ffffff' : '#cbd5e1'}
+                      fontSize="10"
+                      fontWeight={isSelected || isRoot ? '600' : '400'}
                       fontFamily="monospace"
                     >
-                      {node.name}
+                      {node.name.length > 20 ? `${node.name.slice(0, 18)}..` : node.name}
                     </text>
                   </g>
                 );
               })}
             </svg>
 
-            <div className="absolute bottom-2 left-2 text-[10px] text-slate-500 font-mono bg-slate-950/80 px-2 py-1 rounded border border-slate-800">
-              Click node to inspect symbol & callee neighbors
+            <div className="absolute bottom-2 left-2 text-[10px] text-slate-500 font-mono bg-slate-950/80 px-2 py-1 rounded border border-slate-800 flex items-center gap-3">
+              <span>Click node to select</span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-amber-400 inline-block"></span> Root Agent
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-indigo-400 inline-block"></span> Functions/Tools
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-purple-400 inline-block"></span> SubAgents/Classes
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span> Modules/Skills
+              </span>
             </div>
           </div>
 
@@ -262,12 +445,24 @@ export const GraphReasoningLab: React.FC<GraphReasoningLabProps> = () => {
                 <FileCode className="w-4 h-4 text-indigo-400" />
                 <span className="font-mono text-xs font-semibold text-white">{selectedNode.id}</span>
               </div>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                {selectedNode.type}
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    if (!subgraphNodes.includes(selectedNode.id)) {
+                      setSubgraphNodes([...subgraphNodes, selectedNode.id]);
+                    }
+                  }}
+                  className="text-[10px] text-cyan-400 hover:text-cyan-300 font-mono border border-cyan-800/60 bg-cyan-950/40 px-2 py-0.5 rounded cursor-pointer"
+                >
+                  + Add to Subgraph
+                </button>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  {selectedNode.type}
+                </span>
+              </div>
             </div>
             <div className="text-xs text-slate-400">
-              Defined at <span className="font-mono text-slate-200">{selectedNode.file}:{selectedNode.line}</span>
+              File path: <span className="font-mono text-slate-200">{selectedNode.file}:{selectedNode.line}</span>
             </div>
             {selectedNode.docstring && (
               <p className="text-xs text-slate-300 italic bg-slate-900/60 p-2 rounded border border-slate-800/80">
@@ -404,7 +599,7 @@ export const GraphReasoningLab: React.FC<GraphReasoningLabProps> = () => {
                       onClick={() => setSelectedNodeId(edge.target)}
                       className="p-2 bg-slate-950 hover:bg-slate-800 rounded border border-slate-800 flex items-center justify-between text-xs font-mono cursor-pointer"
                     >
-                      <span className="text-cyan-300">{edge.target.split('.').pop()}</span>
+                      <span className="text-cyan-300">{edge.target.split('.').pop() || edge.target}</span>
                       <span className="text-[10px] text-slate-500">[{edge.type}]</span>
                     </div>
                   ))
@@ -423,7 +618,7 @@ export const GraphReasoningLab: React.FC<GraphReasoningLabProps> = () => {
                       onClick={() => setSelectedNodeId(edge.source)}
                       className="p-2 bg-slate-950 hover:bg-slate-800 rounded border border-slate-800 flex items-center justify-between text-xs font-mono cursor-pointer"
                     >
-                      <span className="text-amber-300">{edge.source.split('.').pop()}</span>
+                      <span className="text-amber-300">{edge.source.split('.').pop() || edge.source}</span>
                       <span className="text-[10px] text-slate-500">[{edge.type}]</span>
                     </div>
                   ))

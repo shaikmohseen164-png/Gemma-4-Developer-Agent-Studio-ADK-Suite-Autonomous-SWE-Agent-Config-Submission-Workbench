@@ -129,6 +129,7 @@ export interface VirtualFileTree {
   'eval_config.yaml': string;
   prompts: Record<string, string>; // filename -> markdown content
   sub_agents: Record<string, string>; // filename -> yaml content
+  tests: Record<string, string>; // filename -> python/bash test validation template
   adapters: Record<string, { configJson: string; dummyWeightsNote: string }>;
   skills: Record<string, {
     skillMd: string;

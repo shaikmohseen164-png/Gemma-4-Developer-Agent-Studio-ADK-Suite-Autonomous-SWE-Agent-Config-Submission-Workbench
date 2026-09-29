@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import gemmaLogo from '../assets/images/gemma_agent_icon_1790615325681.jpg';
 import {
   Download,
   Upload,
@@ -73,8 +74,13 @@ export const Navbar: React.FC<NavbarProps> = ({
         {/* Brand & Preset picker */}
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center font-bold text-white shadow-md shadow-indigo-500/20 text-sm">
-              G4
+            <div className="relative group">
+              <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 to-cyan-400 rounded-lg blur-xs opacity-75 group-hover:opacity-100 transition duration-300"></div>
+              <img
+                src={gemmaLogo}
+                alt="Gemma 4 Developer Agent Logo"
+                className="relative w-9 h-9 rounded-lg object-cover border border-cyan-400/40 shadow-md shadow-indigo-950/60"
+              />
             </div>
             <div>
               <div className="font-bold text-sm tracking-tight text-white flex items-center gap-1.5">

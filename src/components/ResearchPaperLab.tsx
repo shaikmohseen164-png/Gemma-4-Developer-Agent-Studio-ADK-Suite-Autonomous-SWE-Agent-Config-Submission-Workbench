@@ -278,6 +278,20 @@ Through parameter-efficient LoRA adapters (targeting attention projections \`q_p
             </div>
           </div>
         </div>
+
+        {/* Official Citation Block */}
+        <div className="mt-4 pt-4 border-t border-slate-800/80 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+              <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+              Official Competition Citation
+            </span>
+            <span className="text-[10px] text-slate-500 font-mono">BibTeX / APA</span>
+          </div>
+          <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 font-mono text-[11px] text-slate-300 leading-relaxed overflow-x-auto select-all">
+            Elan Markowitz, Bryan Perozzi, Benedek Rózemberczki, Glenn Cameron, Hadi Hemmati, Yuchen Li, Michael Galkin, Majid Farhadi, Ryan Holbrook, and Ashley Oldacre. <span className="text-cyan-300">Google - The Gemma 4 Developer Agent Competition</span>. https://www.kaggle.com/competitions/gemma-4-developer-agent, 2026. Kaggle.
+          </div>
+        </div>
       </div>
     </div>
   );

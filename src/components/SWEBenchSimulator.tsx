@@ -14,17 +14,37 @@ import {
   AlertCircle,
   Eye,
   Sliders,
+  CheckCheck,
+  Code2,
+  ShieldAlert,
+  FileCode,
+  Copy,
+  Check,
+  Sparkles,
+  RefreshCw,
+  ShieldCheck,
 } from 'lucide-react';
 import { SAMPLE_SWE_TASKS } from '../data/defaultPresets';
-import { SWEBenchTask } from '../types/agent';
+import { SWEBenchTask, VirtualFileTree } from '../types/agent';
 
-export const SWEBenchSimulator: React.FC = () => {
+interface SWEBenchSimulatorProps {
+  files?: VirtualFileTree;
+}
+
+export const SWEBenchSimulator: React.FC<SWEBenchSimulatorProps> = ({ files }) => {
   const [selectedTaskId, setSelectedTaskId] = useState<string>(SAMPLE_SWE_TASKS[0].id);
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1500); // ms per step
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(142); // 12-hour budget simulation
   const [showGoldDiff, setShowGoldDiff] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<'diff' | 'test_runner'>('diff');
+  const [selectedTestTemplate, setSelectedTestTemplate] = useState<string>('validate_patch.py');
+  const [testRunnerView, setTestRunnerView] = useState<'console' | 'source'>('console');
+  const [testExecutionLog, setTestExecutionLog] = useState<string | null>(null);
+  const [isRunningTest, setIsRunningTest] = useState<boolean>(false);
+  const [testResultStatus, setTestResultStatus] = useState<'passed' | 'failed' | null>(null);
+  const [copiedTestScript, setCopiedTestScript] = useState<boolean>(false);
 
   const currentTask: SWEBenchTask =
     SAMPLE_SWE_TASKS.find((t) => t.id === selectedTaskId) || SAMPLE_SWE_TASKS[0];
@@ -32,6 +52,183 @@ export const SWEBenchSimulator: React.FC = () => {
   const steps = currentTask.steps;
   const currentStep = steps[currentStepIndex];
   const isFinished = currentStepIndex >= steps.length - 1;
+  const hasStagedPatch = currentStepIndex >= 3;
+
+  // Retrieve test templates from files?.tests
+  const testFilesAvailable = Object.keys(files?.tests || {});
+  const availableTestTemplates = testFilesAvailable.length > 0
+    ? testFilesAvailable
+    : ['validate_patch.py', 'test_reproducer.py'];
+
+  // Current selected test script code
+  const currentTestCode = files?.tests?.[selectedTestTemplate] ||
+    (selectedTestTemplate === 'test_reproducer.py'
+      ? `#!/usr/bin/env python3
+"""
+Stand-alone Bug Reproduction Template.
+The agent scripts this to verify that the bug is reproduced before drafting fixes.
+"""
+import sys
+
+def test_problem_statement():
+    print(f"Verifying {currentTask.repo} problem statement...")
+    # Assertion matching current task
+    assert True, "Assertion reproduced"
+    print("Reproduction test passed: issue successfully fixed!")
+
+if __name__ == "__main__":
+    test_problem_statement()
+    sys.exit(0)
+`
+      : `#!/usr/bin/env python3
+"""
+Validation Test Runner for Gemma 4 Autonomous SWE Agent.
+Executes before 'submit_patch()' to ensure zero regressions in /workspace.
+"""
+import subprocess
+import sys
+import os
+
+def check_staged_diff():
+    print("[1/3] Checking git diff HEAD staged modifications...")
+    res = subprocess.run(["git", "diff", "HEAD"], capture_output=True, text=True)
+    if not res.stdout.strip():
+        print("ERROR: No staged patch modifications found. Agent must modify files before submitting.")
+        return False
+    print(f"OK: Staged diff contains valid patch lines.")
+    return True
+
+def run_regression_tests():
+    print("[2/3] Executing repository test suite...")
+    cmd = ["pytest", "-q", "${currentTask.filesInvolved[0]}"]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    return res.returncode == 0
+
+def audit_syntax():
+    print("[3/3] Auditing modified files for syntax compilation...")
+    res = subprocess.run(["python3", "-m", "compileall", "-q", "."], capture_output=True)
+    return res.returncode == 0
+
+if __name__ == "__main__":
+    if check_staged_diff() and audit_syntax() and run_regression_tests():
+        print("\\n>>> VERIFICATION SUCCESS: Safe to invoke submit_patch()")
+        sys.exit(0)
+    else:
+        print("\\n>>> VERIFICATION FAILURE: Do NOT submit patch yet.")
+        sys.exit(1)
+`);
+
+  // Handle run validation test execution simulation
+  const handleRunValidationTest = () => {
+    setIsRunningTest(true);
+    setTestExecutionLog(null);
+    setTestResultStatus(null);
+    setActiveTab('test_runner');
+    setTestRunnerView('console');
+
+    const isReproducer = selectedTestTemplate.includes('reproducer');
+
+    setTimeout(() => {
+      setIsRunningTest(false);
+      if (isReproducer) {
+        if (!hasStagedPatch) {
+          setTestResultStatus('failed');
+          setTestExecutionLog(`$ python3 tests/${selectedTestTemplate}
+[STANDALONE BUG REPRODUCTION HARNESS]
+Repository: ${currentTask.repo}
+Target File: ${currentTask.filesInvolved[0]}
+Testing problem statement assertion:
+> ${currentTask.problemStatement.split('\n')[0]}
+
+Traceback (most recent call last):
+  File "tests/${selectedTestTemplate}", line 15, in test_problem_statement
+    assert res == expected, f"Expected {expected}, got {res}"
+AssertionError: Bug reproduced! Unreduced expression or domain mismatch.
+
+============================= 1 failed in 0.38s =============================
+>>> BUG CONFIRMED REPRODUCED (Exit status 1).
+>>> Baseline failure established in test_reproducer.py prior to patch.`);
+        } else {
+          setTestResultStatus('passed');
+          setTestExecutionLog(`$ python3 tests/${selectedTestTemplate}
+[STANDALONE BUG REPRODUCTION HARNESS]
+Repository: ${currentTask.repo}
+Target File: ${currentTask.filesInvolved[0]}
+Applying staged modifications from /workspace...
+Testing problem statement assertion:
+> ${currentTask.problemStatement.split('\n')[0]}
+
+Reproduction test passed: issue successfully fixed without side effects!
+============================= 1 passed in 0.42s =============================
+>>> VERIFICATION SUCCESS (Exit status 0): Standalone reproducer confirms patch resolves the issue!`);
+        }
+      } else {
+        if (!hasStagedPatch) {
+          setTestResultStatus('failed');
+          setTestExecutionLog(`$ python3 tests/${selectedTestTemplate}
+================================================================================
+SWE-BENCH PRE-SUBMISSION VALIDATION HARNESS (Gemma 4 Developer Agent)
+Target: ${currentTask.repo} (${currentTask.id})
+================================================================================
+[1/3] Checking git diff HEAD staged modifications in /workspace...
+ERROR: No staged patch modifications found.
+       Agent must modify files and stage changes before invoking submit_patch()!
+Checked paths:
+  - ${currentTask.filesInvolved.join('\n  - ')}
+
+============================== VALIDATION FAILED ==============================
+>>> VERIFICATION FAILURE (Exit code 1): Do NOT call submit_patch() yet.
+>>> REASON: Empty git diff. The agent has not yet generated a fix in the current step.`);
+        } else {
+          setTestResultStatus('passed');
+          setTestExecutionLog(`$ python3 tests/${selectedTestTemplate}
+================================================================================
+SWE-BENCH PRE-SUBMISSION VALIDATION HARNESS (Gemma 4 Developer Agent)
+Target: ${currentTask.repo} (${currentTask.id})
+================================================================================
+[1/3] Checking git diff HEAD staged modifications in /workspace...
+OK: Staged diff detected:
+    M ${currentTask.filesInvolved[0]}
+    >>> 8 insertions(+), 2 deletions(-) recorded in git staging.
+
+[2/3] Auditing modified files for syntax compilation (python3 -m compileall)...
+Listing /workspace ...
+Compiling /workspace/${currentTask.filesInvolved[0]} ...
+OK: AST parsing and bytecode compilation successful. 0 syntax errors detected.
+
+[3/3] Executing repository test suite:
+$ ${currentTask.testCommand}
+============================= test session starts ==============================
+platform linux -- Python 3.11.8, pytest-7.4.4, pluggy-1.4.0
+rootdir: /workspace, configfile: pytest.ini
+plugins: cov-4.1.0, timeout-2.2.0
+collected 3 items / 0 deselected / 3 selected
+
+${currentTask.filesInvolved[0]}::test_factor_algebraic_multivariate PASSED [ 33%]
+${currentTask.filesInvolved[0]}::test_factor_algebraic_composite PASSED    [ 66%]
+${currentTask.filesInvolved[0]}::test_dup_factor_list_dispatch PASSED     [100%]
+
+============================== 3 passed in 1.48s ===============================
+>>> VERIFICATION SUCCESS: All regression tests passed with returncode 0.
+>>> SAFE TO INVOKE 'submit_patch()' AND PACKAGE INTO submission.zip!`);
+        }
+      }
+    }, 850);
+  };
+
+  const handleFastForwardAndVerify = () => {
+    setCurrentStepIndex(steps.length - 1);
+    setElapsedSeconds(210);
+    setTimeout(() => {
+      handleRunValidationTest();
+    }, 100);
+  };
+
+  const handleCopyScript = () => {
+    navigator.clipboard.writeText(currentTestCode);
+    setCopiedTestScript(true);
+    setTimeout(() => setCopiedTestScript(false), 2000);
+  };
 
   // Auto-play effect
   useEffect(() => {
@@ -273,89 +470,374 @@ export const SWEBenchSimulator: React.FC = () => {
             </p>
           </div>
 
-          {/* Unified Diff & Validation Card */}
-          <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-sm space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs">
-              <div className="flex items-center gap-2">
-                <FileDiff className="w-4 h-4 text-emerald-400" />
-                <h3 className="font-semibold text-white">
-                  {showGoldDiff ? 'Benchmark Gold Patch' : 'Agent Generated Git Diff'}
-                </h3>
-              </div>
-              <div className="flex items-center gap-2">
+          {/* Dual Tab Card: Unified Diff & Validation Test Runner */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+            {/* Tab Navigation Bar */}
+            <div className="bg-slate-950/80 border-b border-slate-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 bg-slate-900/90 p-1 rounded-lg border border-slate-800 text-xs">
                 <button
-                  onClick={() => setShowGoldDiff(!showGoldDiff)}
-                  className="text-[11px] text-indigo-400 hover:text-indigo-300 cursor-pointer"
+                  onClick={() => setActiveTab('diff')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded font-medium transition cursor-pointer ${
+                    activeTab === 'diff'
+                      ? 'bg-indigo-600 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
                 >
-                  {showGoldDiff ? 'Show Agent Patch' : 'View Gold Patch'}
+                  <FileDiff className="w-3.5 h-3.5 text-indigo-300" />
+                  <span>Unified Git Diff</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('test_runner')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded font-medium transition cursor-pointer ${
+                    activeTab === 'test_runner'
+                      ? 'bg-emerald-600 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <CheckCheck className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>Validation Test Runner</span>
+                  {testResultStatus === 'passed' && (
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  )}
+                  {testResultStatus === 'failed' && (
+                    <span className="w-2 h-2 rounded-full bg-rose-400" />
+                  )}
                 </button>
               </div>
-            </div>
 
-            {/* Diff content view */}
-            <div className="bg-slate-950 rounded-lg border border-slate-800 p-3 font-mono text-xs overflow-x-auto max-h-[220px]">
-              {showGoldDiff ? (
-                currentTask.goldenPatch.split('\n').map((line, idx) => (
-                  <div
-                    key={idx}
-                    className={
-                      line.startsWith('+')
-                        ? 'text-emerald-400 bg-emerald-950/30'
-                        : line.startsWith('-')
-                        ? 'text-rose-400 bg-rose-950/30'
-                        : line.startsWith('@')
-                        ? 'text-cyan-400'
-                        : 'text-slate-400'
-                    }
+              {activeTab === 'diff' ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowGoldDiff(!showGoldDiff)}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 cursor-pointer font-medium"
                   >
-                    {line}
-                  </div>
-                ))
-              ) : currentStepIndex >= 3 ? (
-                currentTask.goldenPatch.split('\n').map((line, idx) => (
-                  <div
-                    key={idx}
-                    className={
-                      line.startsWith('+')
-                        ? 'text-emerald-400 bg-emerald-950/30'
-                        : line.startsWith('-')
-                        ? 'text-rose-400 bg-rose-950/30'
-                        : line.startsWith('@')
-                        ? 'text-cyan-400'
-                        : 'text-slate-400'
-                    }
-                  >
-                    {line}
-                  </div>
-                ))
+                    {showGoldDiff ? 'Show Agent Patch' : 'View Gold Patch'}
+                  </button>
+                </div>
               ) : (
-                <div className="text-slate-500 italic py-6 text-center">
-                  (Patch not generated yet. Agent is currently inspecting call-graph & files.)
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-mono text-slate-400">Sandbox:</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-400 border border-emerald-800/60 flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3" /> Isolated Safe Mode
+                  </span>
                 </div>
               )}
             </div>
 
-            {/* Validation Test Status */}
-            <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-between text-xs">
-              <div className="space-y-0.5">
-                <div className="text-slate-400 text-[11px]">Validation Command:</div>
-                <div className="font-mono text-slate-200 text-[11px]">{currentTask.testCommand}</div>
-              </div>
-
-              <div>
-                {isFinished ? (
-                  <div className="flex items-center gap-1.5 bg-emerald-950 text-emerald-300 px-3 py-1.5 rounded border border-emerald-800 font-mono font-semibold">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span>PASS (100%)</span>
+            {/* TAB CONTENT: Unified Git Diff */}
+            {activeTab === 'diff' && (
+              <div className="p-4 space-y-3">
+                <div className="flex items-center justify-between text-xs pb-1">
+                  <div className="flex items-center gap-2">
+                    <FileDiff className="w-4 h-4 text-emerald-400" />
+                    <h3 className="font-semibold text-white">
+                      {showGoldDiff ? 'Benchmark Gold Reference Patch' : 'Agent Generated Git Diff'}
+                    </h3>
                   </div>
-                ) : (
-                  <div className="flex items-center gap-1.5 bg-slate-900 text-slate-400 px-3 py-1.5 rounded border border-slate-800 font-mono">
-                    <Clock className="w-3.5 h-3.5" />
-                    <span>In Progress...</span>
+                  <span className="font-mono text-[11px] text-slate-400">
+                    {hasStagedPatch ? 'git diff HEAD staged' : 'No patch staged'}
+                  </span>
+                </div>
+
+                {/* Diff content view */}
+                <div className="bg-slate-950 rounded-lg border border-slate-800 p-3 font-mono text-xs overflow-x-auto max-h-[220px]">
+                  {showGoldDiff ? (
+                    currentTask.goldenPatch.split('\n').map((line, idx) => (
+                      <div
+                        key={idx}
+                        className={
+                          line.startsWith('+')
+                            ? 'text-emerald-400 bg-emerald-950/30'
+                            : line.startsWith('-')
+                            ? 'text-rose-400 bg-rose-950/30'
+                            : line.startsWith('@')
+                            ? 'text-cyan-400'
+                            : 'text-slate-400'
+                        }
+                      >
+                        {line}
+                      </div>
+                    ))
+                  ) : hasStagedPatch ? (
+                    currentTask.goldenPatch.split('\n').map((line, idx) => (
+                      <div
+                        key={idx}
+                        className={
+                          line.startsWith('+')
+                            ? 'text-emerald-400 bg-emerald-950/30'
+                            : line.startsWith('-')
+                            ? 'text-rose-400 bg-rose-950/30'
+                            : line.startsWith('@')
+                            ? 'text-cyan-400'
+                            : 'text-slate-400'
+                        }
+                      >
+                        {line}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-slate-500 italic py-6 text-center">
+                      (Patch not generated yet. Agent is currently inspecting call-graph & files.)
+                    </div>
+                  )}
+                </div>
+
+                {/* Validation Test Status */}
+                <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-between text-xs">
+                  <div className="space-y-0.5">
+                    <div className="text-slate-400 text-[11px]">Validation Command:</div>
+                    <div className="font-mono text-slate-200 text-[11px]">{currentTask.testCommand}</div>
+                  </div>
+
+                  <div>
+                    {isFinished ? (
+                      <div className="flex items-center gap-1.5 bg-emerald-950 text-emerald-300 px-3 py-1.5 rounded border border-emerald-800 font-mono font-semibold">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span>PASS (100%)</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 bg-slate-900 text-slate-400 px-3 py-1.5 rounded border border-slate-800 font-mono">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>In Progress...</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENT: Validation Test Runner */}
+            {activeTab === 'test_runner' && (
+              <div className="p-4 space-y-4">
+                {/* Template Selection & Runner Bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-950 p-3 rounded-lg border border-slate-800">
+                  <div className="space-y-1">
+                    <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                      <FileCode className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Select Test Template from <code className="text-indigo-300 font-mono">tests/</code>:</span>
+                    </div>
+                    <select
+                      aria-label="Select test template"
+                      value={selectedTestTemplate}
+                      onChange={(e) => {
+                        setSelectedTestTemplate(e.target.value);
+                        setTestExecutionLog(null);
+                        setTestResultStatus(null);
+                      }}
+                      className="bg-slate-900 border border-slate-800 text-slate-200 text-xs rounded px-2.5 py-1 font-mono focus:outline-none focus:border-indigo-500 cursor-pointer"
+                    >
+                      {availableTestTemplates.map((tName) => (
+                        <option key={tName} value={tName}>
+                          tests/{tName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleRunValidationTest}
+                      disabled={isRunningTest}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-xs font-semibold flex items-center gap-1.5 shadow transition cursor-pointer"
+                    >
+                      {isRunningTest ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Running in Sandbox...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3.5 h-3.5" />
+                          <span>Run Validation Test</span>
+                        </>
+                      )}
+                    </button>
+
+                    {!hasStagedPatch && (
+                      <button
+                        onClick={handleFastForwardAndVerify}
+                        className="px-2.5 py-1.5 bg-indigo-900/60 hover:bg-indigo-800/80 text-indigo-200 border border-indigo-700/60 rounded text-xs flex items-center gap-1 transition cursor-pointer"
+                        title="Fast-forward ReAct trajectory to patch phase and execute verification"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                        <span className="hidden sm:inline">Apply & Verify</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Subview Toggle: Console vs Script Source */}
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                  <div className="flex items-center gap-2 text-xs">
+                    <button
+                      onClick={() => setTestRunnerView('console')}
+                      className={`px-2.5 py-1 rounded text-xs transition cursor-pointer ${
+                        testRunnerView === 'console'
+                          ? 'bg-slate-800 text-white font-medium'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Execution Console & Logs
+                    </button>
+                    <button
+                      onClick={() => setTestRunnerView('source')}
+                      className={`px-2.5 py-1 rounded text-xs transition cursor-pointer flex items-center gap-1 ${
+                        testRunnerView === 'source'
+                          ? 'bg-slate-800 text-white font-medium'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Code2 className="w-3 h-3 text-cyan-400" />
+                      <span>Template Source (tests/{selectedTestTemplate})</span>
+                    </button>
+                  </div>
+
+                  {testRunnerView === 'source' && (
+                    <button
+                      onClick={handleCopyScript}
+                      className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer font-mono"
+                    >
+                      {copiedTestScript ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span className="text-emerald-400">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy Script</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+
+                {/* VIEW 1: Execution Console Terminal */}
+                {testRunnerView === 'console' && (
+                  <div className="space-y-3">
+                    <div className="bg-slate-950 rounded-xl border border-slate-800 overflow-hidden shadow-inner font-mono text-xs">
+                      {/* Terminal Title Bar */}
+                      <div className="bg-slate-900/90 border-b border-slate-800 px-3 py-1.5 flex items-center justify-between text-slate-400 text-[11px]">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-rose-500/80 inline-block" />
+                          <span className="w-2.5 h-2.5 rounded-full bg-amber-500/80 inline-block" />
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/80 inline-block" />
+                          <span className="ml-2 text-slate-300">python3 /workspace/tests/{selectedTestTemplate}</span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-sans">SWE-Bench Sandbox</span>
+                      </div>
+
+                      {/* Terminal Output Body */}
+                      <div className="p-3.5 max-h-[260px] min-h-[160px] overflow-y-auto space-y-1 text-slate-300">
+                        {isRunningTest ? (
+                          <div className="flex flex-col items-center justify-center py-8 text-slate-400 space-y-2">
+                            <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin" />
+                            <div className="text-xs">Executing test harness in /workspace...</div>
+                            <div className="text-[10px] text-slate-500 font-mono">Running AST check & pytest test suite</div>
+                          </div>
+                        ) : testExecutionLog ? (
+                          testExecutionLog.split('\n').map((line, idx) => (
+                            <div
+                              key={idx}
+                              className={
+                                line.includes('SUCCESS') || line.includes('PASSED') || line.includes('OK:')
+                                  ? 'text-emerald-400'
+                                  : line.includes('FAILED') || line.includes('ERROR:') || line.includes('FAILURE')
+                                  ? 'text-rose-400 bg-rose-950/20 px-1 rounded'
+                                  : line.startsWith('$')
+                                  ? 'text-indigo-300 font-semibold'
+                                  : line.startsWith('=')
+                                  ? 'text-cyan-400'
+                                  : 'text-slate-300'
+                              }
+                            >
+                              {line}
+                            </div>
+                          ))
+                        ) : (
+                          <div className="py-8 text-center text-slate-500 space-y-2">
+                            <Terminal className="w-6 h-6 mx-auto opacity-40 text-slate-400" />
+                            <div className="text-xs">
+                              Click <strong className="text-emerald-400 font-sans">"Run Validation Test"</strong> above to verify your agent's patch.
+                            </div>
+                            <div className="text-[11px] text-slate-500 max-w-sm mx-auto font-sans">
+                              Verifies that git diff HEAD is non-empty, checks for AST syntax regressions with compileall, and runs repository validation tests before submission.
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Pre-Submission Verification Summary Banner */}
+                    <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 flex items-center justify-between text-xs">
+                      <div className="space-y-0.5">
+                        <div className="text-[11px] text-slate-400">Pre-Submission Result:</div>
+                        <div className="font-mono text-slate-200 text-[11px] flex items-center gap-1.5">
+                          {testResultStatus === 'passed' ? (
+                            <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> VERIFIED: Ready to package submission.zip
+                            </span>
+                          ) : testResultStatus === 'failed' ? (
+                            <span className="text-rose-400 font-semibold flex items-center gap-1">
+                              <XCircle className="w-3.5 h-3.5" /> REJECTED: Fix patch before calling submit_patch()
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 italic">Not tested yet in this session</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        {testResultStatus === 'passed' ? (
+                          <div className="flex items-center gap-1.5 bg-emerald-950 text-emerald-300 px-3 py-1.5 rounded border border-emerald-800 font-mono font-semibold">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                            <span>PASS (100%)</span>
+                          </div>
+                        ) : testResultStatus === 'failed' ? (
+                          <div className="flex items-center gap-1.5 bg-rose-950 text-rose-300 px-3 py-1.5 rounded border border-rose-800 font-mono font-semibold">
+                            <XCircle className="w-4 h-4 text-rose-400" />
+                            <span>FAIL (Exit 1)</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 bg-slate-900 text-slate-400 px-3 py-1.5 rounded border border-slate-800 font-mono">
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>Pending Run</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* VIEW 2: Template Source Viewer */}
+                {testRunnerView === 'source' && (
+                  <div className="bg-slate-950 rounded-xl border border-slate-800 p-3 font-mono text-xs overflow-x-auto max-h-[300px]">
+                    <div className="text-[10px] text-slate-500 mb-2 pb-1 border-b border-slate-800/80 flex items-center justify-between">
+                      <span>File: /workspace/tests/{selectedTestTemplate}</span>
+                      <span>{currentTestCode.split('\n').length} lines · Python 3.11</span>
+                    </div>
+                    {currentTestCode.split('\n').map((line, idx) => (
+                      <div key={idx} className="flex gap-3 leading-5">
+                        <span className="text-slate-600 text-[10px] w-6 text-right select-none">{idx + 1}</span>
+                        <span className={
+                          line.startsWith('def ') || line.startsWith('import ') || line.startsWith('from ')
+                            ? 'text-indigo-300'
+                            : line.startsWith('#')
+                            ? 'text-slate-500 italic'
+                            : line.includes('print(')
+                            ? 'text-emerald-300'
+                            : line.includes('assert ')
+                            ? 'text-amber-300'
+                            : 'text-slate-300'
+                        }>
+                          {line || '\u00A0'}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

@@ -58,6 +58,13 @@ export async function packageSubmissionZip(files: VirtualFileTree): Promise<Blob
     zip.file(`sub_agents/${filename}`, content);
   }
 
+  // tests/
+  if (files.tests) {
+    for (const [filename, content] of Object.entries(files.tests)) {
+      zip.file(`tests/${filename}`, content);
+    }
+  }
+
   // adapters/
   const dummySafetensor = createMinimalSafetensorsBinary();
   for (const [adapterName, adapterData] of Object.entries(files.adapters)) {
@@ -92,6 +99,7 @@ export async function unpackSubmissionZip(file: File): Promise<VirtualFileTree> 
     'eval_config.yaml': '',
     prompts: {},
     sub_agents: {},
+    tests: {},
     adapters: {},
     skills: {},
   };
@@ -114,6 +122,9 @@ export async function unpackSubmissionZip(file: File): Promise<VirtualFileTree> 
       } else if (relativePath.startsWith('sub_agents/')) {
         const fname = relativePath.replace(/^sub_agents\//, '');
         result.sub_agents[fname] = await zipEntry.async('string');
+      } else if (relativePath.startsWith('tests/')) {
+        const fname = relativePath.replace(/^tests\//, '');
+        result.tests[fname] = await zipEntry.async('string');
       } else if (relativePath.startsWith('adapters/')) {
         const parts = relativePath.split('/');
         const adapterName = parts[1];

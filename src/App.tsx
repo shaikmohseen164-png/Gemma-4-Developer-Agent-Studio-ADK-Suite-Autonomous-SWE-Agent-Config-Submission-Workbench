@@ -71,6 +71,9 @@ export default function App() {
       } else if (filePath.startsWith('sub_agents/')) {
         const fname = filePath.replace(/^sub_agents\//, '');
         updated.sub_agents = { ...updated.sub_agents, [fname]: content };
+      } else if (filePath.startsWith('tests/')) {
+        const fname = filePath.replace(/^tests\//, '');
+        updated.tests = { ...updated.tests, [fname]: content };
       } else if (filePath.startsWith('adapters/')) {
         const parts = filePath.split('/');
         const adapterName = parts[1];
@@ -108,7 +111,7 @@ export default function App() {
   };
 
   // File creation handler
-  const handleCreateFile = (type: 'prompt' | 'subagent' | 'skill' | 'lora', name: string) => {
+  const handleCreateFile = (type: 'prompt' | 'subagent' | 'skill' | 'lora' | 'test', name: string) => {
     setFiles((prev) => {
       const updated = { ...prev };
       if (type === 'prompt') {
@@ -120,6 +123,11 @@ export default function App() {
         updated.sub_agents = {
           ...updated.sub_agents,
           [name]: `# Sub-agent: ${name}\nname: ${name.replace(/\.yaml$/, '')}\nmodel: ${REQUIRED_BASE_MODEL}\nsystem_prompt: !include prompts/system.md\ntools:\n  - read_file\n  - run_command\n`,
+        };
+      } else if (type === 'test') {
+        updated.tests = {
+          ...updated.tests,
+          [name]: `#!/usr/bin/env python3\n"""\nValidation test template: ${name}\nVerify patch validity before submit_patch().\n"""\nimport sys\n\ndef test_suite():\n    print("Running patch verification...")\n    # Implement test assertion\n    assert True, "Validation assertion failed"\n    print("Validation passed!")\n\nif __name__ == "__main__":\n    test_suite()\n    sys.exit(0)\n`,
         };
       } else if (type === 'lora') {
         const adapterConfig = {
@@ -148,7 +156,7 @@ export default function App() {
   };
 
   // File deletion handler
-  const handleDeleteFile = (type: 'prompt' | 'subagent' | 'skill' | 'lora', name: string) => {
+  const handleDeleteFile = (type: 'prompt' | 'subagent' | 'skill' | 'lora' | 'test', name: string) => {
     setFiles((prev) => {
       const updated = { ...prev };
       if (type === 'prompt') {
@@ -159,6 +167,10 @@ export default function App() {
         const copy = { ...updated.sub_agents };
         delete copy[name];
         updated.sub_agents = copy;
+      } else if (type === 'test') {
+        const copy = { ...updated.tests };
+        delete copy[name];
+        updated.tests = copy;
       }
       return updated;
     });
@@ -285,9 +297,9 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'graph' && <GraphReasoningLab />}
+        {activeTab === 'graph' && <GraphReasoningLab files={files} />}
 
-        {activeTab === 'simulator' && <SWEBenchSimulator />}
+        {activeTab === 'simulator' && <SWEBenchSimulator files={files} />}
 
         {activeTab === 'linter' && (
           <LinterInspector
